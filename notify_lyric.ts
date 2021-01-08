@@ -1,18 +1,84 @@
-let net = require("net")
-let msg = require("mp.msg")
-
-const DEBUG = true;
+const DEBUG = false;
 
 function debugLog(message) {
-    if (DEBUG)
-        msg.log(message);
+    if (DEBUG) {
+        if (typeof message == "object")
+            message = JSON.stringify(message, null, 4);
+        mp.msg.info(message);
+    }
 }
 
-const isWindows = navigator.appVersion.indexOf("Win") != -1;
+function checkIsVideo(): boolean {
+    const frameCount = mp.get_property_native("estimated-frame-count");
+    debugLog(frameCount);
+    if (frameCount == undefined || frameCount > 0) {
+        // @ts-ignore
+        const currentVideoTrackFileName: string = mp.get_property_native("current-tracks/video/external-filename")
+        debugLog(currentVideoTrackFileName);
+        if (!currentVideoTrackFileName)
+            return true;
+        const splitFileName = currentVideoTrackFileName.split(".");
+        const extName = splitFileName[splitFileName.length - 1];
+        debugLog(extName);
+        if (extName !in ["jpg", "png", "gif", "JPG", "PNG", "GIF"])
+            return true;
+    }
+    return false;
+}
+
+const cwdPath = mp.utils.getcwd();
+const isWindows = cwdPath.charAt(0) != '/';
 
 const ipcSocketFile = isWindows ? "\\\\.\\pipe\\clyricsocket" : "/tmp/clyricsocket";
 
-let client = net.createConnection(ipcSocketFile);
+const socatRes = mp.command_native({
+    name: "subprocess",
+    args: [
+        "socat"
+    ]
+});
+
+let socatAvail = socatRes == 0;
+
+if (!isWindows && !socatAvail)
+    mp.msg.error("Please install socat for Unix systems.");
+
+function writeToSocket(message: string) {
+    if (isWindows) {
+        for (let specialChar of ['&', '\\', '<', '>', '^', '|'])
+            message = message.replace(specialChar, `^${specialChar}`);
+        mp.command_native_async({
+            name: "subprocess",
+            args: [
+                "C:\\Windows\\System32\\cmd",
+                "/C",
+                `echo ${message} > ${ipcSocketFile}`
+            ]
+        });
+        debugLog([
+            "C:\\Windows\\System32\\cmd",
+            "/C",
+            `echo '${message}' > ${ipcSocketFile}`
+        ].join(" "));
+    } else {
+        if (socatAvail) {
+            message.replace('\'', "\\\'");
+            mp.command_native_async({
+                name: "subprocess",
+                args: [
+                    "/bin/bash",
+                    "-c",
+                    `echo '${message}' | socat - ${ipcSocketFile}`
+                ]
+            });
+            debugLog([
+                "/bin/bash",
+                "-c",
+                `echo '${message}' | socat - ${ipcSocketFile}`
+            ].join(" "));
+        }
+    }
+}
 
 let persistentOverlay = false;
 let display = false;
@@ -42,11 +108,11 @@ class Track {
     }
 }
 
-let track: Track;
+let track = new Track(undefined, undefined, undefined);
 
 function osdMessage(message: string) {
     if (persistentOverlay) {
-        overlay.data = `{\\fs12}${message}`;
+        overlay.data = message;
         overlay.update();
     } else {
         let dispMessage = mp.get_property("osd-ass-cc/0") + "{\\fs12}" + mp.get_property("osd-ass-cc/1") + message;
@@ -94,36 +160,37 @@ function refreshOSD() {
     }
 }
 
-function getMetadata(data, keys) {
-    for (let key in keys) {
-        if (data[key] != null && data[key].length != 0)
-            return data[key]
+function getMetadata(data: object, keys: Array<string>): string {
+    for (let key of keys) {
+        if (data[key] && data[key].length != 0)
+            return data[key];
     }
     return ""
 }
 
 function notifyCurrentTrack() {
-    const frameCount = mp.get_property_native("estimated-frame-count");
-    if (frameCount == null || frameCount > 0)
+    if (checkIsVideo())
         return null;
 
-    const metadata = mp.get_property_native("metadata");
-    if (metadata == null)
+    // @ts-ignore
+    const metadata: object = mp.get_property_native("metadata");
+    debugLog(metadata);
+    if (!metadata)
         return null;
 
-    track.artist = getMetadata(metadata, ["artist", "ARTIST"]);
-    track.album = getMetadata(metadata, ["album", "ALBUM", "CUE_TITLE"]);
-    track.title = getMetadata(metadata, ["title", "TITLE", "icy-title"]);
+    track.artist = getMetadata(metadata, ["artist", "ARTIST", "Artist"]);
+    track.album = getMetadata(metadata, ["album", "ALBUM", "Album", "CUE_TITLE"]);
+    track.title = getMetadata(metadata, ["title", "TITLE", "Title", "icy-title"]);
 
     // @ts-ignore
     let duration: number = mp.get_property_native("duration");
 
-    debugLog(mp.get_property_native("chapter-metadata"));
+    // debugLog(mp.get_property_native("chapter-metadata"));
 
-    if (track.artist == null || track.artist == "" || track.title == null || track.title == "") {
+    if (!track.artist || track.artist == "" || !track.title || track.title == "") {
         const chapterMetadata = mp.get_property_native("chapter-metadata");
 
-        if (chapterMetadata != null) {
+        if (chapterMetadata) {
             const chapterArtist = chapterMetadata["performer"];
             const chapterTitle = chapterMetadata["title"];
             if (track.artist == "")
@@ -137,11 +204,11 @@ function notifyCurrentTrack() {
         // @ts-ignore
         const chapterList: Array<any> = mp.get_property_native("chapter-list");
 
-        if (chapter != null && chapterList != null && chapter >= 0) {
+        if (chapter && chapterList && chapter >= 0) {
             if (chapter < chapterList.length - 1) {
-                duration = chapterList[chapter + 2]["time"];
+                duration = chapterList[chapter + 1]["time"];
             } else {
-                duration = duration - chapterList[chapter + 1]["time"];
+                duration = duration - chapterList[chapter]["time"];
             }
         }
     }
@@ -151,7 +218,7 @@ function notifyCurrentTrack() {
         track.title = mp.get_property_native("filename/no-ext");
     }
 
-    if (track.artist == null || track.title == null || track.album == null)
+    if (!track.artist || !track.title || !track.album)
         return null;
 
     debugLog("notify_current_track: relevant metadata:");
@@ -160,21 +227,21 @@ function notifyCurrentTrack() {
     debugLog(`title: ${track.title}`);
 
     // @ts-ignore
-    const path: string = mp.get_property_native("path");
-    let fileURL = "";
-
-    if (path.startsWith("/"))
-        fileURL = `file://${path}`;
-    else {
-        const dir = mp.get_property_native("working-directory");
-        fileURL = `file://${dir}/${path}`;
-    }
+    // const path: string = mp.get_property_native("path");
+    // let fileURL = "";
+    //
+    // if (path && path.startsWith("/"))
+    //     fileURL = `file://${path}`;
+    // else {
+    //     const dir = mp.get_property_native("working-directory");
+    //     fileURL = `file://${dir}/${path}`;
+    // }
 
     const encodedTrack = track.encodedTrack();
-    const messageContent = `^[setTrack](title=${encodedTrack.title})(album=${encodedTrack.album})(artist=${encodedTrack.artist})(duration=${duration})$`
+    const messageContent = `^[setTrack](title=${encodedTrack.title})(album=${encodedTrack.album})(artist=${encodedTrack.artist})(duration=${Math.round(duration)})$`
 
     try {
-        client.write(messageContent);
+        writeToSocket(messageContent);
     } catch (e) {
         console.log(e.stackTrace)
     }
@@ -182,27 +249,27 @@ function notifyCurrentTrack() {
 }
 
 function playPosChanged() {
-    const frameCount = mp.get_property_native("estimated-frame-count");
-    if (frameCount != null || frameCount > 0)
+    if (checkIsVideo())
         return null;
 
     // @ts-ignore
     let playbackTime: number = mp.get_property_native("time-pos");
-    if (playbackTime == null)
+    debugLog(playbackTime)
+    if (!playbackTime)
         return null;
 
     // @ts-ignore
     const chapter: number = mp.get_property_native("chapter");
     const chapterList = mp.get_property_native("chapter-list");
-    if (chapter != null && chapterList != null && chapter > 0) {
-        playbackTime = playbackTime - chapterList[chapter + 1]["time"];
+    if (chapter && chapterList && chapter > 0) {
+        playbackTime = playbackTime - chapterList[chapter]["time"];
     }
 
     const idle = mp.get_property_native("core-idle");
     const isPlaying = idle ? "false" : "true";
 
-    const messageContent = `^[setState](playing=${isPlaying})(position=${playbackTime * 1000})`;
-    client.write(messageContent);
+    const messageContent = `^[setState](playing=${isPlaying})(position=${Math.round(playbackTime) * 1000})$`;
+    writeToSocket(messageContent);
 
     if (!idle)
         setTimeout(playPosChanged, 10000);
