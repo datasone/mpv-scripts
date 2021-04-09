@@ -19,6 +19,10 @@ end
 
 function debug_log(message)
     if DEBUG then
+        if not message then
+            print("DEBUG: nil")
+            return
+        end
         if "table" == type(message) then
             print("DEBUG: ")
             tprint(message)
@@ -31,21 +35,12 @@ end
 ipc_socket_file = "\\\\.\\pipe\\mpvmcsocket"
 
 function write_to_socket(message)
-    if (is_Windows) then
-        special_chars = { '&', '\\', '<', '>', '|', '^' }
-        for _, char in ipairs(special_chars) do
-            message = message:gsub(char, "^" .. char)
-        end
-        command = "C:\\Windows\\System32\\cmd.exe /C echo " .. message .. " > " .. ipc_socket_file
-        pcall(os.execute, command)
-        debug_log(command)
-    else
-        if (socat_avail) then
-            message = message:gsub("'", "'\\''")
-            command = "echo '" .. message .. "' | socat - " .. ipc_socket_file
-            pcall(os.execute, command)
-            debug_log(command)
-        end
+    _, pipe = pcall(io.open, ipc_socket_file, "w")
+    if pipe then
+        pcall(pipe.write, pipe, message)
+        pcall(pipe.flush, pipe)
+        pcall(pipe.close, pipe)
+        debug_log(message)
     end
 end
 
@@ -72,23 +67,23 @@ function notify_current_file()
     artist = get_metadata(metadata, { "artist", "ARTIST", "Artist" })
     title = get_metadata(metadata, { "title", "TITLE", "Title", "icy-title" })
 
-    if artist == "" or title == "" then
+    if not artist or artist == "" or not title or title == "" then
         chapter_metadata = mp.get_property_native("chapter-metadata")
 
         if chapter_metadata then
             chapter_artist = chapter_metadata["performer"]
-            if artist == "" then
+            if not artist or artist == "" then
                 artist = chapter_artist
             end
 
             chapter_title = chapter_metadata["title"]
-            if title == "" then
+            if not title or title == "" then
                 title = chapter_title
             end
         end
     end
 
-    if title == "" then
+    if not title or title == "" then
         title = mp.get_property_native("filename/no-ext")
     end
 
