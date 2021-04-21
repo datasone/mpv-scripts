@@ -27,7 +27,7 @@ function debug_log(message)
             print("DEBUG: ")
             tprint(message)
         else
-            print("DEBUG: " .. s)
+            print("DEBUG: " .. message)
         end
     end
 end
@@ -215,6 +215,10 @@ function notify_current_track()
         chapter_no = mp.get_property_native("chapter")
         chapter_list = mp.get_property_native("chapter-list")
 
+        if chapter_no < 0 then
+            return
+        end
+
         if chapter_no and chapter_list then
             if chapter_no < #chapter_list - 1 then
                 duration = chapter_list[chapter_no + 2]["time"] - chapter_list[chapter_no + 1]["time"]
@@ -226,6 +230,10 @@ function notify_current_track()
 
     if not title or title == "" then
         title = mp.get_property_native("filename/no-ext")
+    end
+
+    if not artist then
+        artist = ""
     end
 
     if (not artist) or (not title) or (not album) then

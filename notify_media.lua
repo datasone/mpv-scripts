@@ -93,6 +93,10 @@ function notify_current_file()
         path = dir + "\\" + path
     end
 
+    if not artist then
+        artist = ""
+    end
+
     if title then
         title = encode_element(title)
     end
