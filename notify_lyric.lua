@@ -215,11 +215,10 @@ function notify_current_track()
         chapter_no = mp.get_property_native("chapter")
         chapter_list = mp.get_property_native("chapter-list")
 
-        if chapter_no < 0 then
-            return
-        end
-
         if chapter_no and chapter_list then
+            if chapter_no < 0 then
+                return
+            end
             if chapter_no < #chapter_list - 1 then
                 duration = chapter_list[chapter_no + 2]["time"] - chapter_list[chapter_no + 1]["time"]
             else

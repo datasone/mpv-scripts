@@ -27,7 +27,7 @@ function debug_log(message)
             print("DEBUG: ")
             tprint(message)
         else
-            print("DEBUG: " .. s)
+            print("DEBUG: " .. message)
         end
     end
 end
